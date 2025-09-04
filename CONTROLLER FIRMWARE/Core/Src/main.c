@@ -22,7 +22,9 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdbool.h"
+#include "math.h"
 #include "NRF24L01.h"
+#include "MPU6050.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,11 +46,36 @@
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
+I2C_HandleTypeDef hi2c1;
+
 SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
+uint8_t TX_address[] = {0xEE,0xDD,0xCC,0xBB,0xAA};
+uint8_t TX_data[5];
+
+uint16_t adc_val;
+uint16_t throttle; // Speed Control
+
+uint16_t speed_left;
+uint16_t speed_right;
+
+bool direction = true; // Forward(true) or backward(false)
+
+// Steering amount (Default is 1, no steering)
+float sideA = 1;
+float sideB = 1;
+
+/* Accelerometer variables
+ * We only need x and y to calculate roll along z-axis. Note that here roll is calculated
+ * around z-axis since the device is hand held such that we face the z-axis.
+ * Gyroscope readings will also be used later along with accelerometer readings to make the
+ * roll angle calculation more accurate.
+ */
+float x,y;
+float roll; // Determines the steering
 
 /* USER CODE END PV */
 
@@ -59,28 +86,14 @@ static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint8_t TX_address[] = {0xEE,0xDD,0xCC,0xBB,0xAA};
-uint8_t TX_data[5];
 
-uint16_t throttle; // Speed Control
-uint16_t steering; // Steering control
-
-uint16_t speed_left;
-uint16_t speed_right;
-
-uint16_t adc_buffer[2]; // For storing two ADC converted values (throttle & steering)
-
-bool direction = true; // Forward(true) or backward(false)
-
-// Steering amount (Default is 1, no steering)
-float sideA = 1;
-float sideB = 1;
 /* USER CODE END 0 */
 
 /**
@@ -116,12 +129,16 @@ int main(void)
   MX_ADC1_Init();
   MX_TIM3_Init();
   MX_SPI1_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
   nrf24_init();
   nrf24_TXmode(TX_address, 10);
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_buffer, 2);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *) &adc_val, 1);
   HAL_TIM_Base_Start(&htim3);
+
+  // Create an instance of MPU6050 struct.
+  MPU6050_t imu;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -136,28 +153,22 @@ int main(void)
 	  }
 	}
 
-	throttle = adc_buffer[0];
-	steering = adc_buffer[1];
+	// Scale the ADC value to range 0 to 1000.
+	throttle = (adc_val*1000)/4096;
 
-	/* Scaling the steering value
-	* Formula to scale a value from one range to another
-	* output = output_start + ((output_end - output_start) / (input_end - input_start)) * (input - input_start)
-	*/
-	if(steering < 2047){
-	  // Turn left
-	  sideA = 0.1 + ((0.9 - 0.1) / (2046 - 0)) * (steering);
-	  sideB = 1;
-	}
-	else if(steering > 2048){
-	  // Turn right
-	  sideA = 1;
-	  sideB = 0.1 + ((0.9 - 0.1) / (4095 - 2049)) * (steering - 2049);
-	}
-	else if(steering == 2047 || steering == 2048){
-	  // No steering
-	  sideA = 1;
-	  sideB = 1;
-	}
+	MPU6050_Read_Accel(&imu);
+	x = imu.accel_x;
+	y = imu.accel_y;
+
+	roll = atan2(y,x);
+
+	roll = roll * (180.0/M_PI);
+
+	/* output = output_start + ((output_end - output_start) / (input_end - input_start)) * (input - input_start)
+	 * Using fmax and fmin to limit the side values between 1 and 0.
+	 */
+	sideA = fminf(1.00,fmaxf(0.00,1 + (1 /90.0) * (roll)));
+	sideB = fminf(1.00,fmaxf(0.00,1 - (1 /90.0) * (roll)));
 
 	speed_left = throttle * sideA;
 	speed_right = throttle * sideB;
@@ -247,12 +258,12 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.NbrOfConversion = 1;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -267,18 +278,43 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
-
-  /** Configure Regular Channel
-  */
-  sConfig.Channel = ADC_CHANNEL_2;
-  sConfig.Rank = ADC_REGULAR_RANK_2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /* USER CODE BEGIN ADC1_Init 2 */
 
   /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 100000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
