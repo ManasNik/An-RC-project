@@ -1,6 +1,12 @@
 #settings
 .settings/
 
+# Unneccessary folders
+FIRMWARE/
+Photos & videos/
+Programming Manuals/
+Datasheets and spec sheets/
+
 #metadata
 .metadata/
 
