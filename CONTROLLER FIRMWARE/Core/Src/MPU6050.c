@@ -45,6 +45,9 @@ void MPU6050_init(){
 
 		data = 0x00;
 		MPU6050_writeByte(GYRO_CONFIG, data);
+
+		data = 0x02;
+		MPU6050_writeByte(CONFIG_MPU, data);
 	}
 }
 

@@ -24,6 +24,7 @@
 #include "stdbool.h"
 #include "TB6612FNG.h"
 #include "NRF24L01.h"
+#include "stdlib.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,14 +50,15 @@ TIM_HandleTypeDef htim1;
 /* USER CODE BEGIN PV */
 tb6612fng_t motor_driver; // Custom struct for all motor driver pins and PWM channels
 
-uint16_t speed_left;
-uint16_t speed_right;
+uint16_t throttle;
+int16_t steering;
 
 bool in1 = true; // CW or forward by default
 bool in2 = false;
 
 uint8_t RX_address[] = {0xEE,0xDD,0xCC,0xBB,0xAA};
 uint8_t RX_buffer[5];
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -118,7 +120,9 @@ int main(void)
   {
 	  if(isDataAvailable(1)){
 		  nrf24_Receive(RX_buffer,5);
+		  HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
 	  }
+
 	  // Note: Data in RX_buffer follows the same indexing as TX data buffer.
 	  if((bool)RX_buffer[0] == 0){
 		  in1 = false;
@@ -130,8 +134,11 @@ int main(void)
 	  }
 
 	  // Reconstruction of the 16-bit speed values from the two received 8-bit data pairs.
-	  speed_left = ((uint16_t) RX_buffer[1] << 8) | RX_buffer[2];
-	  speed_right = ((uint16_t) RX_buffer[3] << 8) | RX_buffer[4];
+	  throttle = ((uint16_t) RX_buffer[1] << 8) | RX_buffer[2];
+	  steering = ((int16_t) RX_buffer[3] << 8) | RX_buffer[4];
+
+	  uint16_t speed_left = throttle + steering;
+	  uint16_t speed_right = throttle - steering;
 
 	  // Forward or reverse control
 	  tb6612fng_direction(&motor_driver, in1, in2);

@@ -25,6 +25,8 @@
 #include "math.h"
 #include "NRF24L01.h"
 #include "MPU6050.h"
+#include "Pedals.h"
+#include "EMA.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,7 +36,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define SAMPLE_TIME_MS 20
+#define COMP_FLT_ALPHA 0.4f
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,20 +56,32 @@ SPI_HandleTypeDef hspi1;
 TIM_HandleTypeDef htim3;
 
 /* USER CODE BEGIN PV */
+// Transmitter variables
 uint8_t TX_address[] = {0xEE,0xDD,0xCC,0xBB,0xAA};
 uint8_t TX_data[5];
 
-uint16_t adc_val;
-uint16_t throttle; // Speed Control
+// ADC input variables for throttle and braking inputs
+uint16_t adc_val[2];
+uint16_t throttle;
 
+// Brake input
+uint16_t brake_input;
+// Brake amount
+uint8_t braking;
+
+// Acceleration and deceleration(motor braking - slowing down motor using PWM)
+uint8_t accel = 3;
+uint8_t decel = 3;
+
+// Steering variables
+float steering_gain = 1.0f; // Ranges from 1 to 0. Decreases as speed increases. High gain means more steering.
+int16_t steering; // Actual steering amount
+
+// Final speeds
 uint16_t speed_left;
 uint16_t speed_right;
 
 bool direction = true; // Forward(true) or backward(false)
-
-// Steering amount (Default is 1, no steering)
-float sideA = 1;
-float sideB = 1;
 
 /* Accelerometer variables
  * We only need x and y to calculate roll along z-axis. Note that here roll is calculated
@@ -74,9 +89,18 @@ float sideB = 1;
  * Gyroscope readings will also be used later along with accelerometer readings to make the
  * roll angle calculation more accurate.
  */
-float x,y;
-float roll; // Determines the steering
+float ax,ay,gz;
+float roll_est;
 
+float roll_angle_z; // The calculated angle around Z-axis
+float steering_angle = 0.0f; // Determines the steering
+
+EMA_t ema_ax, ema_ay, ema_gz;
+float filter_ax, filter_ay, filter_gz;
+
+uint32_t lastSampled = 0;
+// Test variable
+int dir = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -88,7 +112,8 @@ static void MX_TIM3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
-
+static inline
+float map_range(float input, float input_start, float input_end, float output_start, float output_end);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -131,10 +156,17 @@ int main(void)
   MX_SPI1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  /* Initializing Exponential Moving Average filter with alpha 0.5 for cleaning
+   * Accelerometer and Gyroscope outputs before giving as input to the complementary filter.
+  */
+  EMA_init(&ema_ax, 0.5);
+  EMA_init(&ema_ay, 0.5);
+  EMA_init(&ema_gz, 0.5);
+
   nrf24_init();
   nrf24_TXmode(TX_address, 10);
 
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t *) &adc_val, 1);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t *) adc_val, 2);
   HAL_TIM_Base_Start(&htim3);
 
   // Create an instance of MPU6050 struct.
@@ -154,31 +186,46 @@ int main(void)
 	}
 
 	// Scale the ADC value to range 0 to 1000.
-	throttle = (adc_val*1000)/4096;
+	throttle = (adc_val[0]*1000)/4096;
 
 	MPU6050_Read_Accel(&imu);
-	x = imu.accel_x;
-	y = imu.accel_y;
+	ax = imu.accel_x;
+	ay = imu.accel_y;
 
-	roll = atan2(y,x);
+	filter_ax = EMA_update(&ema_ax, ax);
+	filter_ay = EMA_update(&ema_ay, ay);
 
-	roll = roll * (180.0/M_PI);
+	// Roll(Phi) estimate from accelerometer data(in radians)
+	roll_est = atan2f(filter_ay,filter_ax);
 
-	/* output = output_start + ((output_end - output_start) / (input_end - input_start)) * (input - input_start)
-	 * Using fmax and fmin to limit the side values between 1 and 0.
+	MPU6050_Read_Gyro(&imu);
+	gz = imu.gyro_z;
+
+	filter_gz = EMA_update(&ema_gz, gz) * (M_PI/180.0);
+
+	/* Sensor fusion between accelerometer and gyroscope using complementary filter
+	 * Angle_n+1 = Accl_n * alpha + (1-alpha)(angle_n + (dt*Gyr_n))
 	 */
-	sideA = fminf(1.00,fmaxf(0.00,1 + (1 /90.0) * (roll)));
-	sideB = fminf(1.00,fmaxf(0.00,1 - (1 /90.0) * (roll)));
 
-	speed_left = throttle * sideA;
-	speed_right = throttle * sideB;
+	// Compute dt
+	uint32_t now = HAL_GetTick();
+	float dt = (now - lastSampled) / 1000.0f;
+	lastSampled = now;
+
+	roll_angle_z = roll_est * COMP_FLT_ALPHA + (1 - COMP_FLT_ALPHA)*(roll_angle_z + dt *filter_gz);
+
+	steering_angle = roll_angle_z * (180.0/M_PI);
+
+	float steering_scaled = map_range(steering_angle, -120.0f, 120.0f, -200.0f, 200.0f);
+
+	steering = steering_gain + steering_scaled;
 
 	TX_data[0] = (uint8_t) direction;
 	// Note: 16-bit values are sent as two 8-bit values with MSB stored in lower index than LSB.
-	TX_data[1] = (speed_left >> 8) & 0xFF;
-	TX_data[2] = (speed_left & 0xFF);
-	TX_data[3] = (speed_right >> 8) & 0xFF;
-	TX_data[4] = (speed_right & 0xFF);
+	TX_data[1] = (throttle >> 8) & 0xFF;
+	TX_data[2] = (throttle & 0xFF);
+	TX_data[3] = (steering >> 8) & 0xFF;
+	TX_data[4] = (steering & 0xFF);
 
 	if(nrf24_Transmit(TX_data,5)){
 		HAL_GPIO_TogglePin(TX_LED_GPIO_Port, TX_LED_Pin);
@@ -258,12 +305,12 @@ static void MX_ADC1_Init(void)
   /** Common config
   */
   hadc1.Instance = ADC1;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 2;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -274,6 +321,15 @@ static void MX_ADC1_Init(void)
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Rank = ADC_REGULAR_RANK_2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -459,7 +515,10 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+// Helper Functions
+static inline float map_range(float input, float input_start, float input_end, float output_start, float output_end){
+	return output_start + ((output_end - output_start) / (input_end - input_start)) * (input - input_start);
+}
 /* USER CODE END 4 */
 
 /**

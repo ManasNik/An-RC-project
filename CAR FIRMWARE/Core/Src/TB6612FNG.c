@@ -34,6 +34,11 @@ void tb6612fng_direction(tb6612fng_t* tbf, bool in1, bool in2){
 
 // Function for changing motor speed using PWM
 void tb6612fng_speed(tb6612fng_t tbf ,uint16_t speed_left, uint16_t speed_right){
+	// Cap the speeds to minimum of 0 and maximum of 1000.
+	  if(speed_left < 0){ speed_left = 0; }
+	  if(speed_right < 0){ speed_right = 0; }
+	  if(speed_left > 1000){ speed_left = 1000; }
+	  if(speed_right > 1000){ speed_right = 1000; }
 	// Applying the speed to all the four motors
 	__HAL_TIM_SET_COMPARE(tbf.htim,tbf.front_left,speed_left);
 	__HAL_TIM_SET_COMPARE(tbf.htim,tbf.front_right,speed_right);

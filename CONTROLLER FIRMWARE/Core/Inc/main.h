@@ -61,6 +61,8 @@ void Error_Handler(void);
 #define REVERSE_GPIO_Port GPIOA
 #define Throttle_Pin GPIO_PIN_1
 #define Throttle_GPIO_Port GPIOA
+#define Brake_Pin GPIO_PIN_2
+#define Brake_GPIO_Port GPIOA
 #define SPI_CSS_Pin GPIO_PIN_0
 #define SPI_CSS_GPIO_Port GPIOB
 #define CE_Pin GPIO_PIN_1

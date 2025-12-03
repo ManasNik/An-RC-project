@@ -1,4 +1,4 @@
-26042216203806577
+26043970419416977
 Audio_Module
 Reverb_BTDR-1H
 Digital Reverberation Unit, http://www.belton.co.kr/inc/downfile.php?seq=17&file=pdf (footprint from http://www.uk-electronic.de/PDF/BTDR-1.pdf)
@@ -57504,6 +57504,13 @@ Through hole socket strip THT 1x20 2.54mm single row
 0
 40
 40
+Custom_footprints
+COMTECH_C-OBD-II-16M
+
+
+0
+16
+16
 Custom_footprints
 NRF24L01
 Through hole straight socket strip, 2x04, 2.54mm pitch, double cols (from Kicad 4.0.7), script generated

@@ -17,6 +17,7 @@
 #define ACCEL_CONFIG 	0x1C
 #define GYRO_XOUT		0x43
 #define ACCEL_XOUT_H    0x3B
+#define CONFIG_MPU		0x1A
 
 typedef struct{
 	float gyro_x;
