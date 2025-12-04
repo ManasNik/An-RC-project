@@ -62,7 +62,12 @@ I designed a simple 2-layered PCB to transfer the breadboard circuit onto the 3d
 ![RC car schematic_page-0001](https://github.com/user-attachments/assets/2ed425dd-5d86-4a38-b04f-4a7e7cffdebd)
 
 **PCB design**
+
 <img width="903" height="802" alt="Screenshot 2025-12-03 183949" src="https://github.com/user-attachments/assets/7ba3316d-02b5-4ee4-b85c-15a8c0895afa" />
+
+Final PCB
+![WhatsApp Image 2025-12-03 at 16 24 01_501648d1](https://github.com/user-attachments/assets/cac9580d-3f6d-41cb-b267-81c741eb3f44)
+
 
 This was my first time designing a PCB on my own and ordering it. Obviously I made mistakes!
 - I forgot to include capacitors in the design to reduce the noise on the power lines, since the brushed DC motors cause electrical noise due to brush-commutator sparking. This noise interfered a lot with the NRF24L01 module making it lose connection with the controller. I greatly reduced this later by soldering electrolytic and ceramic capacitors near the motor termianls and power supply pins of the modules.
